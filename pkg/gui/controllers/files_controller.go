@@ -622,19 +622,7 @@ func (self *FilesController) press(selectedNodes []*filetree.FileNode) error {
 			return !node.IsFile() || node.GetIsTracked()
 		})
 
-		if len(untrackedNodes) > 0 {
-			if err := self.c.Git().WorkingTree.UnstageUntrackedFiles(toPaths(untrackedNodes)); err != nil {
-				return err
-			}
-		}
-
-		if len(trackedNodes) > 0 {
-			if err := self.c.Git().WorkingTree.UnstageTrackedFiles(toPaths(trackedNodes)); err != nil {
-				return err
-			}
-		}
-
-		return nil
+		return self.unstagePaths(toPaths(trackedNodes), toPaths(untrackedNodes))
 	}
 
 	return self.toggleStaged(selectedNodes,
@@ -661,6 +649,12 @@ func (self *FilesController) unstageFilteredFiles(nodes []*filetree.FileNode) er
 			return nil
 		})
 	}
+	return self.unstagePaths(trackedPaths, untrackedPaths)
+}
+
+// unstagePaths unstages the given paths, which need different git commands
+// depending on whether they are tracked.
+func (self *FilesController) unstagePaths(trackedPaths []string, untrackedPaths []string) error {
 	if len(untrackedPaths) > 0 {
 		if err := self.c.Git().WorkingTree.UnstageUntrackedFiles(untrackedPaths); err != nil {
 			return err
