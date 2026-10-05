@@ -258,6 +258,7 @@ var tests = []*components.IntegrationTest{
 	file.StageAllWithoutChangedFiles,
 	file.StageChildrenRangeSelect,
 	file.StageDeletedRangeSelect,
+	file.StageFailureShowsRealStatus,
 	file.StageRangeSelect,
 	filter_and_search.FilterByFileStatus,
 	filter_and_search.FilterCommitFiles,
