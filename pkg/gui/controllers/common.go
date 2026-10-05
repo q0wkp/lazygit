@@ -1,8 +1,14 @@
 package controllers
 
 import (
+	"time"
+
 	"github.com/jesseduffield/lazygit/pkg/gui/controllers/helpers"
 )
+
+// How long an operation may run before its progress indicator switches to a
+// spinner; quick operations stay free of flicker.
+const spinnerGracePeriod = 200 * time.Millisecond
 
 type ControllerCommon struct {
 	*helpers.HelperCommon
