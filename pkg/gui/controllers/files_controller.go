@@ -504,7 +504,9 @@ func (self *FilesController) optimisticChange(nodes []*filetree.FileNode, optimi
 // only in the git commands they run, which is why those are passed in.
 //
 // The callbacks gather what to act on from the nodes and return the git work
-// to do, so that everything they read from the UI state is read up front.
+// to do, so that everything they read from the UI state is read up front. The
+// git work then runs on a worker: staging thousands of files, or large ones,
+// can take a long time, and a spinner shows that lazygit is still busy.
 //
 // If any node has unstaged changes we stage the nodes that have them (staging
 // already-staged deleted files/folders would fail); otherwise we unstage all
@@ -544,6 +546,7 @@ func (self *FilesController) toggleStaged(
 	}
 
 	var run func() error
+	var statusMessage string
 	if shouldStage {
 		self.c.LogAction(stageAction)
 
@@ -552,6 +555,7 @@ func (self *FilesController) toggleStaged(
 		}
 
 		run = stage(unstagedNodes)
+		statusMessage = self.c.Tr.StagingStatus
 	} else {
 		// If there's nothing staged to unstage either, then the only thing we acted
 		// on was an unstageable submodule and nothing happened, so say why.
@@ -566,16 +570,25 @@ func (self *FilesController) toggleStaged(
 		}
 
 		run = unstage(nodes)
+		statusMessage = self.c.Tr.UnstagingStatus
 	}
 
-	if err := run(); err != nil {
-		return err
-	}
+	return self.c.WithWaitingStatusBlockingInput(
+		types.WaitingStatusOpts{Message: statusMessage, ShowAfter: spinnerGracePeriod},
+		func(gocui.Task) error {
+			if err := run(); err != nil {
+				return err
+			}
 
-	self.c.Refresh(types.RefreshOptions{Scope: []types.RefreshableView{types.FILES}})
-
-	self.context().HandleFocus(types.OnFocusOpts{})
-	return nil
+			self.c.RefreshFromWorker(types.RefreshOptions{
+				Scope: []types.RefreshableView{types.FILES},
+				Then: func() error {
+					self.context().HandleFocus(types.OnFocusOpts{})
+					return nil
+				},
+			})
+			return nil
+		})
 }
 
 func (self *FilesController) press(selectedNodes []*filetree.FileNode) error {

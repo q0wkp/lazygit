@@ -458,6 +458,8 @@ type TranslationSet struct {
 	ApplyingFilterStatus                  string
 	RemovingFilterStatus                  string
 	StashingStatus                        string
+	StagingStatus                         string
+	UnstagingStatus                       string
 	ApplyingStashStatus                   string
 	PoppingStashStatus                    string
 	CommitFiles                           string
@@ -1646,6 +1648,8 @@ func EnglishTranslationSet() *TranslationSet {
 		ApplyingFilterStatus:                 "Applying filter",
 		RemovingFilterStatus:                 "Removing filter",
 		StashingStatus:                       "Stashing",
+		StagingStatus:                        "Staging",
+		UnstagingStatus:                      "Unstaging",
 		ApplyingStashStatus:                  "Applying stash",
 		PoppingStashStatus:                   "Popping stash",
 		CommitFiles:                          "Commit files",
