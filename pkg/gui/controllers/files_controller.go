@@ -471,16 +471,16 @@ func (self *FilesController) optimisticUnstage(file *models.File) bool {
 func (self *FilesController) optimisticChange(nodes []*filetree.FileNode, optimisticChangeFn func(*models.File) bool) error {
 	rerender := false
 
+	// can't act on the files of the nodes themselves: we need to update the
+	// original model files
+	modelFilesByPath := lo.KeyBy(self.c.Model().Files, func(file *models.File) string {
+		return file.Path
+	})
+
 	for _, node := range nodes {
 		err := node.ForEachFile(func(f *models.File) error {
-			// can't act on the file itself: we need to update the original model file
-			for _, modelFile := range self.c.Model().Files {
-				if modelFile.Path == f.Path {
-					if optimisticChangeFn(modelFile) {
-						rerender = true
-					}
-					break
-				}
+			if modelFile, ok := modelFilesByPath[f.Path]; ok && optimisticChangeFn(modelFile) {
+				rerender = true
 			}
 
 			return nil
