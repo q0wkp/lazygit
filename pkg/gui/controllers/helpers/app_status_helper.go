@@ -70,6 +70,10 @@ func (self *AppStatusHelper) WithWaitingStatus(message string, f func(gocui.Task
 // work dispatched to a worker. task is used to hide the status while the task
 // is paused; it may be nil for callers whose f ignores its task.
 func (self *AppStatusHelper) WithWaitingStatusImpl(message string, f func(gocui.Task) error, task gocui.Task) error {
+	return self.withWaitingStatus(message, 0, f, task)
+}
+
+func (self *AppStatusHelper) withWaitingStatus(message string, showAfter time.Duration, f func(gocui.Task) error, task gocui.Task) error {
 	// A waiting status means lazygit is driving a git operation itself (often
 	// one that internally runs a rebase and continues it). Pause the background
 	// routines for its duration so they don't refresh from an intermediate
@@ -77,7 +81,7 @@ func (self *AppStatusHelper) WithWaitingStatusImpl(message string, f func(gocui.
 	self.c.PauseBackgroundRefreshes(true)
 	defer self.c.PauseBackgroundRefreshes(false)
 
-	return self.statusMgr().WithWaitingStatus(message, self.renderAppStatus, func(waitingStatusHandle *status.WaitingStatusHandle) error {
+	return self.statusMgr().WithWaitingStatus(message, showAfter, self.renderAppStatus, func(waitingStatusHandle *status.WaitingStatusHandle) error {
 		return f(appStatusHelperTask{task, waitingStatusHandle})
 	})
 }
@@ -110,7 +114,7 @@ func (self *AppStatusHelper) WithWaitingStatusBlockingInput(opts types.WaitingSt
 			}
 			return self.c.GocuiGui().EndBlockingEvents()
 		})
-		return self.WithWaitingStatusImpl(opts.Message, f, task)
+		return self.withWaitingStatus(opts.Message, opts.ShowAfter, f, task)
 	})
 }
 

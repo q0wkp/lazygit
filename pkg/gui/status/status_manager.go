@@ -30,16 +30,65 @@ type WaitingStatusHandle struct {
 	statusManager *StatusManager
 	message       string
 	renderFunc    func()
-	id            int
+
+	// Guards id and pendingShow, which the timer of a delayed show touches
+	// from its own goroutine.
+	mutex deadlock.Mutex
+	id    int
+
+	// The timer that shows the status once its delay has elapsed; nil when
+	// no delayed show is pending.
+	pendingShow *time.Timer
 }
 
+// Show shows the status right away, superseding a pending delayed show.
 func (self *WaitingStatusHandle) Show() {
-	self.id = self.statusManager.addStatus(self.message, "waiting", types.ToastKindStatus)
-	self.renderFunc()
+	self.mutex.Lock()
+	defer self.mutex.Unlock()
+
+	self.cancelPendingShow()
+	self.show()
 }
 
 func (self *WaitingStatusHandle) Hide() {
+	self.mutex.Lock()
+	defer self.mutex.Unlock()
+
+	self.cancelPendingShow()
 	self.statusManager.removeStatus(self.id)
+}
+
+func (self *WaitingStatusHandle) showAfter(delay time.Duration) {
+	self.mutex.Lock()
+	defer self.mutex.Unlock()
+
+	var timer *time.Timer
+	timer = time.AfterFunc(delay, func() {
+		self.mutex.Lock()
+		defer self.mutex.Unlock()
+
+		// The timer may fire while Show or Hide is cancelling it; whichever of
+		// them got there first has taken over.
+		if self.pendingShow != timer {
+			return
+		}
+
+		self.pendingShow = nil
+		self.show()
+	})
+	self.pendingShow = timer
+}
+
+func (self *WaitingStatusHandle) cancelPendingShow() {
+	if self.pendingShow != nil {
+		self.pendingShow.Stop()
+		self.pendingShow = nil
+	}
+}
+
+func (self *WaitingStatusHandle) show() {
+	self.id = self.statusManager.addStatus(self.message, "waiting", types.ToastKindStatus)
+	self.renderFunc()
 }
 
 type appStatus struct {
@@ -53,9 +102,16 @@ func NewStatusManager() *StatusManager {
 	return &StatusManager{}
 }
 
-func (self *StatusManager) WithWaitingStatus(message string, renderFunc func(), f func(*WaitingStatusHandle) error) error {
+// WithWaitingStatus shows a waiting status while f runs. A non-zero showAfter
+// holds the status back until f has been running for that long, so that it
+// doesn't flash up for operations that finish quickly.
+func (self *StatusManager) WithWaitingStatus(message string, showAfter time.Duration, renderFunc func(), f func(*WaitingStatusHandle) error) error {
 	handle := &WaitingStatusHandle{statusManager: self, message: message, renderFunc: renderFunc, id: -1}
-	handle.Show()
+	if showAfter > 0 {
+		handle.showAfter(showAfter)
+	} else {
+		handle.Show()
+	}
 	defer handle.Hide()
 
 	return f(handle)

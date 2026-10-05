@@ -1,6 +1,8 @@
 package types
 
 import (
+	"time"
+
 	"github.com/jesseduffield/lazygit/pkg/commands"
 	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
 	"github.com/jesseduffield/lazygit/pkg/commands/models"
@@ -186,6 +188,12 @@ type IPopupHandler interface {
 type WaitingStatusOpts struct {
 	// The message shown alongside the spinner while the operation runs.
 	Message string
+
+	// When non-zero, the status only appears once the operation has been
+	// running for this long, so that it doesn't flash up for operations that
+	// usually finish quickly. Input is blocked for the whole operation either
+	// way.
+	ShowAfter time.Duration
 
 	// When set, the working tree state mode (the yellow
 	// "Rebasing"/"Merging"/"Cherry-picking"/"Reverting" indicator, along with
