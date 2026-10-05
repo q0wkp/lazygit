@@ -498,10 +498,10 @@ func (self *FilesController) optimisticChange(nodes []*filetree.FileNode, optimi
 }
 
 // toggleStaged decides whether to stage or unstage the given nodes, updates the
-// model optimistically, and then runs the matching git command via the supplied
-// callbacks. press() (acting on the selection) and toggleStagedAll() (acting on
-// the whole tree) share this; they differ only in the git commands they run,
-// which is why those are passed in.
+// model optimistically, runs the matching git command via the supplied
+// callbacks, and then refreshes the files. press() (acting on the selection)
+// and toggleStagedAll() (acting on the whole tree) share this; they differ
+// only in the git commands they run, which is why those are passed in.
 //
 // If any node has unstaged changes we stage the nodes that have them (staging
 // already-staged deleted files/folders would fail); otherwise we unstage all
@@ -540,6 +540,7 @@ func (self *FilesController) toggleStaged(
 		shouldStage = !noOp
 	}
 
+	var run func() error
 	if shouldStage {
 		self.c.LogAction(stageAction)
 
@@ -547,25 +548,40 @@ func (self *FilesController) toggleStaged(
 			return err
 		}
 
-		return stage(unstagedNodes)
+		run = func() error { return stage(unstagedNodes) }
+	} else {
+		// If there's nothing staged to unstage either, then the only thing we acted
+		// on was an unstageable submodule and nothing happened, so say why.
+		if !someNodesHaveStagedChanges(nodes) {
+			return errors.New(self.c.Tr.NothingToStageForSubmodule)
+		}
+
+		self.c.LogAction(unstageAction)
+
+		if err := self.optimisticChange(nodes, self.optimisticUnstage); err != nil {
+			return err
+		}
+
+		run = func() error { return unstage(nodes) }
 	}
 
-	// If there's nothing staged to unstage either, then the only thing we acted
-	// on was an unstageable submodule and nothing happened, so say why.
-	if !someNodesHaveStagedChanges(nodes) {
-		return errors.New(self.c.Tr.NothingToStageForSubmodule)
-	}
-
-	self.c.LogAction(unstageAction)
-
-	if err := self.optimisticChange(nodes, self.optimisticUnstage); err != nil {
+	if err := run(); err != nil {
 		return err
 	}
 
-	return unstage(nodes)
+	self.c.Refresh(types.RefreshOptions{Scope: []types.RefreshableView{types.FILES}})
+
+	self.context().HandleFocus(types.OnFocusOpts{})
+	return nil
 }
 
-func (self *FilesController) pressWithLock(selectedNodes []*filetree.FileNode) error {
+func (self *FilesController) press(selectedNodes []*filetree.FileNode) error {
+	// A single file with a conflict that can only be resolved through a dialog
+	// can't be staged; route it to the same picker that `enter` uses instead.
+	if len(selectedNodes) == 1 && self.conflictNeedsResolutionDialog(selectedNodes[0].File) {
+		return self.openConflictResolutionMenu(selectedNodes[0].File)
+	}
+
 	// When filtering, expand directory nodes to individual visible file paths
 	// so that only filtered files are staged/unstaged.
 	toPaths := func(nodes []*filetree.FileNode) []string {
@@ -624,23 +640,6 @@ func (self *FilesController) pressWithLock(selectedNodes []*filetree.FileNode) e
 	return self.toggleStaged(selectedNodes,
 		self.c.Tr.Actions.StageFile, self.c.Tr.Actions.UnstageFile,
 		stage, unstage)
-}
-
-func (self *FilesController) press(nodes []*filetree.FileNode) error {
-	// A single file with a conflict that can only be resolved through a dialog
-	// can't be staged; route it to the same picker that `enter` uses instead.
-	if len(nodes) == 1 && self.conflictNeedsResolutionDialog(nodes[0].File) {
-		return self.openConflictResolutionMenu(nodes[0].File)
-	}
-
-	if err := self.pressWithLock(nodes); err != nil {
-		return err
-	}
-
-	self.c.Refresh(types.RefreshOptions{Scope: []types.RefreshableView{types.FILES}})
-
-	self.context().HandleFocus(types.OnFocusOpts{})
-	return nil
 }
 
 func (self *FilesController) pathsForDiff(node *filetree.FileNode) []string {
@@ -919,17 +918,6 @@ func (self *FilesController) anyFilesDisplayed() *types.DisabledReason {
 }
 
 func (self *FilesController) toggleStagedAll() error {
-	if err := self.toggleStagedAllWithLock(); err != nil {
-		return err
-	}
-
-	self.c.Refresh(types.RefreshOptions{Scope: []types.RefreshableView{types.FILES}})
-
-	self.context().HandleFocus(types.OnFocusOpts{})
-	return nil
-}
-
-func (self *FilesController) toggleStagedAllWithLock() error {
 	root := self.context().FileTreeViewModel.GetRoot()
 
 	stage := func(unstagedNodes []*filetree.FileNode) error {
