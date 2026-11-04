@@ -561,6 +561,9 @@ func (self *FilesController) optimisticChange(nodes []*filetree.FileNode, optimi
 // and toggleStagedAll() (acting on the whole tree) share this; they differ
 // only in the git commands they run, which is why those are passed in.
 //
+// The callbacks gather what to act on from the nodes and return the git work
+// to do, so that everything they read from the UI state is read up front.
+//
 // If any node has unstaged changes we stage the nodes that have them (staging
 // already-staged deleted files/folders would fail); otherwise we unstage all
 // the nodes.
@@ -568,8 +571,8 @@ func (self *FilesController) toggleStaged(
 	nodes []*filetree.FileNode,
 	stageAction string,
 	unstageAction string,
-	stage func(unstagedNodes []*filetree.FileNode) error,
-	unstage func(nodes []*filetree.FileNode) error,
+	stage func(unstagedNodes []*filetree.FileNode) func() error,
+	unstage func(nodes []*filetree.FileNode) func() error,
 ) error {
 	for _, node := range nodes {
 		// if any files within have inline merge conflicts we can't stage or unstage,
@@ -606,7 +609,7 @@ func (self *FilesController) toggleStaged(
 			return err
 		}
 
-		run = func() error { return stage(unstagedNodes) }
+		run = stage(unstagedNodes)
 	} else {
 		// If there's nothing staged to unstage either, then the only thing we acted
 		// on was an unstageable submodule and nothing happened, so say why.
@@ -620,7 +623,7 @@ func (self *FilesController) toggleStaged(
 			return err
 		}
 
-		run = func() error { return unstage(nodes) }
+		run = unstage(nodes)
 	}
 
 	if err := run(); err != nil {
@@ -658,16 +661,19 @@ func (self *FilesController) press(selectedNodes []*filetree.FileNode) error {
 		})
 	}
 
-	stage := func(unstagedNodes []*filetree.FileNode) error {
+	stage := func(unstagedNodes []*filetree.FileNode) func() error {
 		var extraArgs []string
 		if self.context().GetStatusFilter() == filetree.DisplayTracked {
 			extraArgs = []string{"-u"}
 		}
 
-		return self.c.Git().WorkingTree.StageFiles(toPaths(unstagedNodes), extraArgs)
+		paths := toPaths(unstagedNodes)
+		return func() error {
+			return self.c.Git().WorkingTree.StageFiles(paths, extraArgs)
+		}
 	}
 
-	unstage := func(nodes []*filetree.FileNode) error {
+	unstage := func(nodes []*filetree.FileNode) func() error {
 		if self.context().IsFiltering() {
 			// When filtering, only unstage visible files
 			return self.unstageFilteredFiles(nodes)
@@ -680,7 +686,10 @@ func (self *FilesController) press(selectedNodes []*filetree.FileNode) error {
 			return !node.IsFile() || node.GetIsTracked()
 		})
 
-		return self.unstagePaths(toPaths(trackedNodes), toPaths(untrackedNodes))
+		trackedPaths, untrackedPaths := toPaths(trackedNodes), toPaths(untrackedNodes)
+		return func() error {
+			return self.unstagePaths(trackedPaths, untrackedPaths)
+		}
 	}
 
 	return self.toggleStaged(selectedNodes,
@@ -693,9 +702,10 @@ func (self *FilesController) pathsForDiff(node *filetree.FileNode) []string {
 		node.Raw(), self.context().GetRoot().Raw(), self.c.Model().Files, self.context().IsFiltering())
 }
 
-// unstageFilteredFiles unstages only the visible (filtered) files from the
-// given nodes, correctly partitioning by tracked/untracked.
-func (self *FilesController) unstageFilteredFiles(nodes []*filetree.FileNode) error {
+// unstageFilteredFiles returns the git work that unstages only the visible
+// (filtered) files from the given nodes, correctly partitioning by
+// tracked/untracked.
+func (self *FilesController) unstageFilteredFiles(nodes []*filetree.FileNode) func() error {
 	var trackedPaths, untrackedPaths []string
 	for _, node := range nodes {
 		_ = node.ForEachFile(func(file *models.File) error {
@@ -707,7 +717,9 @@ func (self *FilesController) unstageFilteredFiles(nodes []*filetree.FileNode) er
 			return nil
 		})
 	}
-	return self.unstagePaths(trackedPaths, untrackedPaths)
+	return func() error {
+		return self.unstagePaths(trackedPaths, untrackedPaths)
+	}
 }
 
 // unstagePaths unstages the given paths, which need different git commands
@@ -1027,7 +1039,7 @@ func (self *FilesController) stageAllScope() stageAllScope {
 func (self *FilesController) toggleStagedAll() error {
 	root := self.context().FileTreeViewModel.GetRoot()
 
-	stage := func(unstagedNodes []*filetree.FileNode) error {
+	stage := func(unstagedNodes []*filetree.FileNode) func() error {
 		switch self.stageAllScope() {
 		case stageAllVisibleFiles:
 			var paths []string
@@ -1035,21 +1047,27 @@ func (self *FilesController) toggleStagedAll() error {
 				paths = append(paths, file.Path)
 				return nil
 			})
-			return self.c.Git().WorkingTree.StageFiles(paths, nil)
+			return func() error {
+				return self.c.Git().WorkingTree.StageFiles(paths, nil)
+			}
 		case stageAllTrackedFiles:
-			return self.c.Git().WorkingTree.StageAll(true)
+			return func() error {
+				return self.c.Git().WorkingTree.StageAll(true)
+			}
 		default:
-			return self.c.Git().WorkingTree.StageAll(false)
+			return func() error {
+				return self.c.Git().WorkingTree.StageAll(false)
+			}
 		}
 	}
 
-	unstage := func(nodes []*filetree.FileNode) error {
+	unstage := func(nodes []*filetree.FileNode) func() error {
 		if self.context().IsFiltering() {
 			// When filtering, only unstage visible files
 			return self.unstageFilteredFiles(nodes)
 		}
 
-		return self.c.Git().WorkingTree.UnstageAll()
+		return self.c.Git().WorkingTree.UnstageAll
 	}
 
 	return self.toggleStaged([]*filetree.FileNode{root},
