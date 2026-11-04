@@ -39,10 +39,6 @@ func loadAllCommitsIfSelectionIsNearEnd(c *ControllerCommon, context canLoadAllC
 	}
 }
 
-// How long a commit move may take before the drop indicator switches to a
-// "moving commits here" spinner; quick moves stay free of flicker.
-const commitDragMovingIndicatorDelay = 200 * time.Millisecond
-
 type (
 	PullFilesFn func() error
 )
@@ -326,7 +322,7 @@ func (self *LocalCommitsController) startMovingCommitsIndicator(insertionIndex i
 	stop := make(chan struct{})
 	self.movingCommitsIndicatorStop = stop
 	go utils.Safe(func() {
-		graceTimer := time.NewTimer(commitDragMovingIndicatorDelay)
+		graceTimer := time.NewTimer(spinnerGracePeriod)
 		defer graceTimer.Stop()
 		select {
 		case <-graceTimer.C:
